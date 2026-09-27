@@ -1,0 +1,3 @@
+FROM alpine:3.23
+RUN apk add --no-cache github-cli openssh-client sshpass python3 py3-yaml ca-certificates
+WORKDIR /work

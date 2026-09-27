@@ -94,8 +94,12 @@ servers:
         workflow = yaml.load(Path('.github/workflows/health.yml').read_text(), Loader=yaml.BaseLoader)
         self.assertEqual(workflow['on']['schedule'][0]['cron'], '34 * * * *')
         self.assertIn('workflow_dispatch', workflow['on'])
-        self.assertEqual(workflow['jobs']['health']['container'], 'alpine:3.23')
-        config = yaml.safe_load(Path('servers.yaml').read_text())
+        self.assertEqual(workflow['permissions']['contents'], 'read')
+        self.assertEqual(workflow['jobs']['publish']['permissions']['contents'], 'write')
+        self.assertNotIn('toJSON(secrets)', Path('.github/workflows/health.yml').read_text())
+        self.assertNotIn('toJSON(vars)', Path('.github/workflows/health.yml').read_text())
+        self.assertIn('FROM alpine:3.23', Path('.github/Dockerfile.health').read_text())
+        config = yaml.safe_load(Path('servers.yaml.example').read_text())
         self.assertEqual(list(health.targets(config)), [])
 
 

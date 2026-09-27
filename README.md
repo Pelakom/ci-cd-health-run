@@ -38,7 +38,7 @@ GitHub Actions -> Alpine collector -> servers.yaml + repository secrets
               health.md and health.json
 ```
 
-Targets are checked sequentially. Once collection completes, the workflow publishes the report and marks the run as failed if any target failed. A successful result means the connection and probe completed; the default probe does not apply CPU or memory alert thresholds.
+The workflow plans enabled targets without loading credentials, then checks them in isolated jobs with at most four running concurrently. Once collection completes, the workflow publishes the report and marks the run as failed if any target failed. A successful result means the connection and probe completed; the default probe does not apply CPU or memory alert thresholds.
 
 ## Quick start
 
@@ -197,20 +197,33 @@ Releases point to the checked commit and are not marked as the latest release. T
 
 | Syntax | Where the value comes from |
 | --- | --- |
-| `secret:NAME` | Repository Actions secrets supplied through `HEALTH_SECRETS_JSON` |
+| `secret:NAME` | The named repository Actions secret, selected dynamically for the target |
 | `env:NAME` | The collector process's environment |
-| `var:NAME` | Actions variables supplied through `HEALTH_VARS_JSON` |
+| `var:NAME` | The named Actions variable, selected dynamically for the target |
 
-Use secrets for tokens, passwords, and private keys. Environment references are useful for local runs. A repository secret does not automatically become an environment variable. To use `env:MY_TOKEN` in Actions, explicitly map it in the **Collect health** step:
+Use secrets for tokens, passwords, and private keys. You still only need to edit the reference in YAML and create the matching repository secret; no workflow edit is required for `secret:NAME` or `var:NAME`.
 
-```yaml
-env:
-  HEALTH_SECRETS_JSON: ${{ toJSON(secrets) }}
-  HEALTH_VARS_JSON: ${{ toJSON(vars) }}
-  MY_TOKEN: ${{ secrets.MY_TOKEN }}
-```
+Environment references are useful for local runs. A repository secret does not automatically become an environment variable. For `env:MY_TOKEN` in Actions, add `MY_TOKEN: ${{ secrets.MY_TOKEN }}` to the **Collect one target with its selected credentials** step's `env` mapping, and add `-e MY_TOKEN` to its `docker run` command. Prefer `secret:MY_TOKEN` to avoid those manual mappings.
 
-The collector receives the secrets bundle to support user-defined secret names. It passes only the selected account token or SSH password to the relevant child process, and writes private keys to temporary files with restricted permissions. Treat the workflow, YAML command, and probe as trusted executable configuration.
+For compatibility with local integrations, the collector also accepts explicit JSON maps through `HEALTH_SECRETS_JSON` and `HEALTH_VARS_JSON`. The Actions workflow does not populate these maps or serialize the repository's entire secrets/variables context.
+
+## Workflow permissions and credential boundaries
+
+The workflow separates planning, collection, and publication:
+
+| Job | Access and behavior |
+| --- | --- |
+| `plan` | Read-only repository token; reads enabled targets and credential names, without target secret values |
+| `health` | Read-only repository token; one target per job, only its selected credential values injected into an Alpine collector |
+| `publish` | `contents: write` for release publication; combines report artifacts without receiving target credentials |
+
+Source checkout and artifact actions run on the Ubuntu host. The health probe collector runs in an `alpine:3.23` Docker container, whose dependencies are installed before target credentials are supplied. The container receives a read-only source mount and a writable report directory. Checkout does not persist its GitHub token in Git configuration. Actions are pinned to full commit SHAs.
+
+The collector passes only the selected account token or SSH password to the relevant child process, and stores SSH private keys in temporary files with restricted permissions. Host-key verification remains enabled. The default probe reads operating-system metrics; it does not install services or alter the target's configuration. Custom commands and probes are trusted executable configuration and should be reviewed before use.
+
+Reports are transferred as artifacts from the same workflow run, retained for seven days, and then published together in a single release. If a target job produces no valid report, the combined report records that target as failed.
+
+These boundaries follow GitHub's [least-privilege guidance](https://docs.github.com/en/actions/reference/security/secure-use). They do not disable GitHub's workflow security checks or guarantee automatic approval. If GitHub holds a run as potentially malicious, a collaborator with write access must review and approve it through an authenticated browser session, as described in [GitHub's announcement](https://github.blog/changelog/2026-07-28-github-actions-holds-potentially-malicious-workflows-for-approval/).
 
 ## Understanding the measurements
 
@@ -264,7 +277,7 @@ The test suite uses local execution and mocked remote connections. Files in `rep
 | Workflow is red but a report exists | One or more targets failed; inspect the per-target entries in the release |
 | Manual trigger is unavailable | Ensure Actions is enabled and the workflow exists on the default branch |
 
-Per-target failures do not stop the remaining checks. Connection diagnostics are summarized rather than publishing raw SSH/GH stderr. If the entire job is cancelled, exceeds its 45-minute limit, or fails before report generation, a release may not be created. For larger inventories, account for sequential execution when adjusting the job timeout.
+Per-target failures do not cancel other target jobs. Connection diagnostics are summarized rather than publishing raw SSH/GH stderr. Collection jobs have a 15-minute limit, including image setup; individual probes retain the configured timeout of at most 600 seconds. Planning and publishing each have a 10-minute limit. Planning errors, cancellation, or a publishing failure can prevent release creation. The workflow supports up to 256 enabled targets, subject to GitHub Actions quotas. Local collection remains sequential.
 
 Reports inherit repository visibility and include server labels and process names. Known credential values are redacted, but custom probe output should be chosen with the report audience in mind. Each run creates a new release; automatic retention cleanup is not implemented.
 
@@ -273,10 +286,12 @@ Checks capture health at the time of execution. The hourly schedule does not pro
 ## Repository layout
 
 ```text
-.github/workflows/health.yml  Scheduling, Alpine setup, collection, and publication
+.github/workflows/health.yml  Planning, isolated collection, and release publication
+.github/Dockerfile.health     Alpine collector dependencies
 servers.yaml                 Active target configuration
 servers.yaml.example         Editable configuration template
 scripts/health.py             Credential resolution, connections, and report generation
 scripts/health.sh             Default Linux health probe
-tests/test_health.py          Collector and probe validation
+scripts/workflow.py           Secret-free target planning and report aggregation
+tests/                       Collector, credential isolation, and workflow validation
 ```

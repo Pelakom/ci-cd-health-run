@@ -25,6 +25,12 @@ class Credentials:
             'var': json.loads(os.environ.get('HEALTH_VARS_JSON', '{}')),
             'env': dict(os.environ),
         }
+        # Actions supplies only references and values selected for this target.
+        references = json.loads(os.environ.get('HEALTH_REFERENCES_JSON', '{}'))
+        for field, reference in references.items():
+            if reference['source'] in ('secret', 'var'):
+                self.sources[reference['source']][reference['name']] = os.environ.get(
+                    'HEALTH_' + field.upper(), '')
         self.sensitive = set()
         for value in self.sources['secret'].values():
             self.remember(value)
@@ -131,7 +137,7 @@ def targets(config):
                     yield kind, str(label) if kind == 'ssh' else f'{label}/{name}', target, entry
 
 
-def run(config_path, output):
+def run(config_path, output, target_index=None):
     credentials = Credentials()
     results = []
     try:
@@ -146,6 +152,8 @@ def run(config_path, output):
             raise ConfigError('timeout_seconds must be between 1 and 600')
         probe = (config_path.parent / config.get('probe', 'scripts/health.sh')).read_text()
         selected = list(targets(config))
+        if target_index is not None:
+            selected = [selected[target_index]]
         for kind, label, target, account in selected:
             result = {'type': kind, 'server': label}
             try:
@@ -157,6 +165,11 @@ def run(config_path, output):
         # YAML parse diagnostics can include source lines; don't publish them.
         results.append({'type': 'config', 'server': 'configuration', 'status': 'error',
                         'error': str(exc) if isinstance(exc, ConfigError) else 'Cannot read/parse configuration or probe file'})
+    return write_report(results, output, credentials)
+
+
+def write_report(results, output, credentials=None):
+    credentials = credentials or Credentials()
     report = {'generated_at': datetime.now(timezone.utc).isoformat(),
               'failed': sum(r['status'] == 'error' for r in results), 'results': results}
     # Redact only after all referenced credentials have been resolved.
@@ -187,5 +200,6 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', type=Path, default=Path('servers.yaml'))
     parser.add_argument('--output', type=Path, default=Path('reports'))
+    parser.add_argument('--target-index', type=int)
     args = parser.parse_args()
-    run(args.config, args.output)
+    run(args.config, args.output, args.target_index)

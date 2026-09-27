@@ -4,40 +4,96 @@ on:
   schedule:
     - cron: '34 * * * *'
 permissions:
-  contents: write
+  contents: read
 concurrency:
   group: server-health
   cancel-in-progress: false
 jobs:
-  health:
+  plan:
     runs-on: ubuntu-latest
-    container: alpine:3.23
-    timeout-minutes: 45
-    defaults:
-      run:
-        shell: sh
+    timeout-minutes: 10
+    outputs:
+      matrix: ${{ steps.targets.outputs.matrix }}
     steps:
-      - name: Install tools
-        run: apk add --no-cache github-cli openssh-client sshpass python3 py3-yaml ca-certificates tar
-      # Shell checkout avoids JavaScript actions' glibc dependency in Alpine.
-      - name: Download exact workflow revision
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Read enabled targets without credentials
+        id: targets
         run: |
-          gh api "repos/$GITHUB_REPOSITORY/tarball/$GITHUB_SHA" > /tmp/source.tar.gz
-          tar -xzf /tmp/source.tar.gz --strip-components=1 -C "$GITHUB_WORKSPACE"
-      - name: Collect health
-        id: collect
+          docker run --rm -v "$GITHUB_WORKSPACE:/work" -w /work alpine:3.23 \
+            sh -ec 'apk add --no-cache python3 py3-yaml; python3 scripts/workflow.py plan > matrix.out'
+          cat matrix.out >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: health-plan
+          path: plan.json
+          retention-days: 7
+          if-no-files-found: error
+
+  health:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        if: matrix.id >= 0
+        with:
+          persist-credentials: false
+      - name: Build Alpine collector before loading credentials
+        if: matrix.id >= 0
+        run: docker build -f .github/Dockerfile.health -t health-collector .github
+      - name: Collect one target with its selected credentials
+        if: matrix.id >= 0
         env:
-          HEALTH_SECRETS_JSON: ${{ toJSON(secrets) }}
-          HEALTH_VARS_JSON: ${{ toJSON(vars) }}
-        run: python3 scripts/health.py --config servers.yaml --output reports
+          TARGET_INDEX: ${{ matrix.id }}
+          HEALTH_REFERENCES_JSON: ${{ toJSON(matrix.references) }}
+          HEALTH_PRIVATEKEY: ${{ matrix.references.privatekey.source == 'secret' && secrets[matrix.references.privatekey.name] || matrix.references.privatekey.source == 'var' && vars[matrix.references.privatekey.name] || '' }}
+          HEALTH_PASSWORD: ${{ matrix.references.password.source == 'secret' && secrets[matrix.references.password.name] || matrix.references.password.source == 'var' && vars[matrix.references.password.name] || '' }}
+          HEALTH_KNOWN_HOSTS: ${{ matrix.references.known_hosts.source == 'secret' && secrets[matrix.references.known_hosts.name] || matrix.references.known_hosts.source == 'var' && vars[matrix.references.known_hosts.name] || '' }}
+          HEALTH_GITHUB_TOKEN: ${{ matrix.references.github_token.source == 'secret' && secrets[matrix.references.github_token.name] || matrix.references.github_token.source == 'var' && vars[matrix.references.github_token.name] || '' }}
+        run: |
+          mkdir -p reports
+          docker run --rm -v "$GITHUB_WORKSPACE:/work:ro" \
+            -v "$GITHUB_WORKSPACE/reports:/reports" \
+            -e HEALTH_REFERENCES_JSON -e HEALTH_PRIVATEKEY -e HEALTH_PASSWORD \
+            -e HEALTH_KNOWN_HOSTS -e HEALTH_GITHUB_TOKEN \
+            health-collector python3 scripts/health.py --target-index "$TARGET_INDEX" --output /reports
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        if: ${{ always() && matrix.id >= 0 }}
+        with:
+          name: target-${{ matrix.id }}
+          path: reports/health.json
+          retention-days: 7
+          if-no-files-found: error
+
+  publish:
+    needs: [plan, health]
+    if: ${{ always() && needs.plan.result == 'success' && !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          path: artifacts
+      - name: Combine reports without target credentials
+        run: |
+          docker run --rm -v "$GITHUB_WORKSPACE:/work" -w /work alpine:3.23 \
+            sh -ec 'apk add --no-cache python3 py3-yaml; python3 scripts/workflow.py merge --plan artifacts/health-plan/plan.json'
+          cat reports/health.md >> "$GITHUB_STEP_SUMMARY"
       - name: Publish release report
-        if: ${{ always() && steps.collect.outcome != 'skipped' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          test -f reports/health.md
           tag="health-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           gh release create "$tag" reports/health.md reports/health.json \
             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
