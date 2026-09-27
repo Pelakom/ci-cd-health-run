@@ -1,0 +1,47 @@
+name: Server health keepalive
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '34 * * * *'
+permissions:
+  contents: write
+concurrency:
+  group: server-health
+  cancel-in-progress: false
+jobs:
+  health:
+    runs-on: ubuntu-latest
+    container: alpine:3.23
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: sh
+    steps:
+      - name: Install tools
+        run: apk add --no-cache github-cli openssh-client sshpass python3 py3-yaml ca-certificates tar
+      # Shell checkout avoids JavaScript actions' glibc dependency in Alpine.
+      - name: Download exact workflow revision
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/tarball/$GITHUB_SHA" > /tmp/source.tar.gz
+          tar -xzf /tmp/source.tar.gz --strip-components=1 -C "$GITHUB_WORKSPACE"
+      - name: Collect health
+        id: collect
+        env:
+          HEALTH_SECRETS_JSON: ${{ toJSON(secrets) }}
+          HEALTH_VARS_JSON: ${{ toJSON(vars) }}
+        run: python3 scripts/health.py --config servers.yaml --output reports
+      - name: Publish release report
+        if: ${{ always() && steps.collect.outcome != 'skipped' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test -f reports/health.md
+          tag="health-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          gh release create "$tag" reports/health.md reports/health.json \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "Server health $tag" --notes-file reports/health.md --latest=false
+      - name: Mark unhealthy run
+        run: |
+          python3 -c 'import json,sys; r=json.load(open("reports/health.json")); sys.exit(1 if r["failed"] else 0)'
