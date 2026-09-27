@@ -1,0 +1,34 @@
+# Nilai kredensial adalah referensi, bukan isi secret.
+# Aktifkan target setelah mengisi host/nama dan repository secrets.
+command: sh -s
+probe: scripts/health.sh
+timeout_seconds: 180
+servers:
+  ssh:
+    server1:
+      enabled: false
+      user: root
+      host: remote-host
+      port: 22
+      privatekey: secret:SSH_SERVER1_KEY
+      known_hosts: secret:SSH_SERVER1_KNOWN_HOSTS
+    server2:
+      enabled: false
+      user: root
+      host: remote-host-2
+      password: secret:SSH_SERVER2_PASSWORD
+      known_hosts: secret:SSH_SERVER2_KNOWN_HOSTS
+  github-codespace:
+    account1:
+      github_token: secret:CODESPACES_ACCOUNT1_TOKEN
+      codespace1:
+        enabled: false
+        name: curly-space-train-767qr77vg562pvv9
+      codespace2:
+        enabled: false
+        name: replace-with-second-codespace
+    account2:
+      github_token: env:CODESPACES_ACCOUNT2_TOKEN
+      codespace1:
+        enabled: false
+        name: replace-with-account2-codespace
