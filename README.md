@@ -11,7 +11,7 @@ Use it to check the machines behind your build pipelines, inspect development en
 - Checks Linux servers over SSH using a private key, a password, or both.
 - Connects to named GitHub Codespaces using a separate token for each account.
 - Collects uptime, CPU usage, memory usage, and the five live processes with the highest CPU usage.
-- Runs manually through `workflow_dispatch` or hourly with `34 * * * *`.
+- Runs manually through `workflow_dispatch` or hourly with `17 * * * *`.
 - Publishes Markdown and JSON reports to the same repository's GitHub Releases.
 - Records individual target failures and continues checking the remaining targets.
 - Supports custom secret names, environment variables, and a replaceable remote probe.
@@ -154,10 +154,10 @@ The schedule is:
 
 ```yaml
 schedule:
-  - cron: '34 * * * *'
+  - cron: '17 * * * *'
 ```
 
-It runs hourly at minute 34 in UTC, which is also minute 34 each hour in WIB. Scheduled runs use the default branch and may be delayed by GitHub Actions scheduling. See [GitHub's schedule documentation](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#onschedule).
+It runs hourly at minute 17 in UTC, which is also minute 17 each hour in WIB. Scheduled runs use the default branch and may be delayed by GitHub Actions scheduling. See [GitHub's schedule documentation](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#onschedule).
 
 ### 6. Read the report
 
@@ -295,3 +295,18 @@ scripts/health.sh             Default Linux health probe
 scripts/workflow.py           Secret-free target planning and report aggregation
 tests/                       Collector, credential isolation, and workflow validation
 ```
+
+## Markdown reports in the repository
+
+Each run also commits its generated Markdown report to
+`reports-sample/health-<run-id>-<attempt>.md` on the repository's default branch.
+The file contains the same report as the release asset, including failed targets.
+Manual runs on other branches also archive their report on the default branch.
+
+The publishing job uses the GitHub Contents API with its existing `contents: write`
+permission to create a single-file commit. It does not force-push or replace other
+files. Existing identical reports are left unchanged; different content at the same
+path is rejected. Branch conflicts are retried. Branch rules must allow the workflow
+token to make this commit; otherwise the archive step fails without bypassing them.
+Release publication remains enabled. Reports accumulate without automatic deletion.
+The workflow has no `push` trigger, so report commits do not start another health check.

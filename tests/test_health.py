@@ -92,7 +92,7 @@ servers:
         import yaml
         # BaseLoader preserves YAML 1.2's 'on' key without YAML 1.1 coercion.
         workflow = yaml.load(Path('.github/workflows/health.yml').read_text(), Loader=yaml.BaseLoader)
-        self.assertEqual(workflow['on']['schedule'][0]['cron'], '34 * * * *')
+        self.assertEqual(workflow['on']['schedule'][0]['cron'], '17 * * * *')
         self.assertIn('workflow_dispatch', workflow['on'])
         self.assertEqual(workflow['permissions']['contents'], 'read')
         self.assertEqual(workflow['jobs']['publish']['permissions']['contents'], 'write')
