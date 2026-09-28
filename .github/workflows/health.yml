@@ -2,7 +2,7 @@ name: CI/CD Runner Health Report
 on:
   workflow_dispatch:
   schedule:
-    - cron: '34 * * * *'
+    - cron: '17 * * * *'
 permissions:
   contents: read
 concurrency:
