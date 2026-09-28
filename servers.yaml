@@ -30,5 +30,8 @@ servers:
     account2:
       github_token: env:CODESPACES_ACCOUNT2_TOKEN
       codespace1:
-        enabled: false
-        name: replace-with-account2-codespace
+        enabled: true
+        name: scaling-journey-97576xj4px7rc7rqx
+      codespace2:
+        enabled: true
+        name: stunning-spoon-97576xj4pwwjcx599
