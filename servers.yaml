@@ -28,7 +28,7 @@ servers:
         enabled: true
         name: ubiquitous-space-garbanzo-x7r69rr5jv936745
     account2:
-      github_token: env:CODESPACES_ACCOUNT2_TOKEN
+      github_token: secret:CODESPACES_ACCOUNT2_TOKEN
       codespace1:
         enabled: true
         name: scaling-journey-97576xj4px7rc7rqx

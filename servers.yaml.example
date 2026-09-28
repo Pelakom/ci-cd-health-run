@@ -28,7 +28,7 @@ servers:
         enabled: false
         name: replace-with-second-codespace
     account2:
-      github_token: env:CODESPACES_ACCOUNT2_TOKEN
+      github_token: secret:CODESPACES_ACCOUNT2_TOKEN
       codespace1:
         enabled: false
         name: replace-with-account2-codespace
